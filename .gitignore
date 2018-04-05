@@ -1,0 +1,5 @@
+depends
+mongo-cxx-driver-r3.1.2
+mongo-c-driver-1.9.3
+libbson-1.9.3
+cmake-build-debug
