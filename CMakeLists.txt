@@ -1,23 +1,58 @@
-cmake_minimum_required(VERSION 3.9)
-project(cb_server)
+cmake_minimum_required(VERSION 3.5)
+project(server)
 
+
+set(
+        DEPENDS_DIR
+        "${CMAKE_CURRENT_SOURCE_DIR}/snark"
+        CACHE
+        STRING
+        "Optionally specify the dependency installation directory relative to the source directory (default: inside dependency folder)"
+)
 
 set(CMAKE_CXX_STANDARD 11)
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}  -Wall")
+
+set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/modules")
+
+
+include_directories(. db snark crypto support primitives script snark/libsnark snark/libsnark snark/libsnark/common
+                             ${OPENSSL_INCLUDE_DIRS} ${GOBJECT_INCLUDE_DIR} snark/gtest/googletest/include)
+
+include_directories(${LIBMONGOCXX_INCLUDE_DIR})
+include_directories(${LIBBSONCXX_INCLUDE_DIR})
+
+#it's not good to hard code absolute paths but it's needed
+#https://stackoverflow.com/questions/37210716/using-the-mongodb-cxx-driver-in-a-cmake-c-project?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
+
+include_directories("/usr/local/include/mongocxx/v_noabi")
+include_directories("/usr/local/include/bsoncxx/v_noabi")
+
+
+ADD_DEFINITIONS(-DBOOST_LOG_DYN_LINK)
+
+
+add_subdirectory(src/utilities)
+add_subdirectory(src/cblib)
+add_subdirectory(src/zmq)
+add_subdirectory(zcash)
+add_subdirectory(primitives)
+add_subdirectory(script)
+add_subdirectory(crypto)
+add_subdirectory(consensus)
+add_subdirectory(snark)
+add_subdirectory(support)
+add_subdirectory(db)
+add_subdirectory(zmqpp)
 
 ## load in pkg-config support
 find_package(PkgConfig)
-find_package(libmongocxx REQUIRED)
-find_package(libbsoncxx REQUIRED)
+find_package(Boost REQUIRED COMPONENTS log filesystem system thread program_options)
 find_package(Threads)
 pkg_check_modules(JSONCPP jsoncpp)
 
-
-add_subdirectory(db)
-add_subdirectory(zmq)
-add_subdirectory(utilities)
-add_subdirectory(zclib)
 
 ## use pkg-config to get hints for 0mq locations
 pkg_check_modules(PC_ZeroMQ QUIET zmq)
@@ -35,22 +70,69 @@ find_library(ZeroMQ_LIBRARY
         )
 
 
+find_package(GMP REQUIRED)
+find_package(Procps REQUIRED)
+find_package(JNI REQUIRED)
+find_package(libmongocxx REQUIRED)
+find_package(libbsoncxx REQUIRED)
 
-add_executable(cb_server main.cpp)
+pkg_search_module(OPENSSL REQUIRED openssl)
 
-include_directories(${LIBMONGOCXX_INCLUDE_DIR})
-include_directories(${LIBBSONCXX_INCLUDE_DIR})
+#this line is required for linking to libprocps
+pkg_check_modules(PROCPS REQUIRED libprocps)
 
-#it's not good to hard code absolute paths but it's needed
-#https://stackoverflow.com/questions/37210716/using-the-mongodb-cxx-driver-in-a-cmake-c-project?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
+add_library(testlib SHARED IMPORTED)
+add_library(testlib2 SHARED IMPORTED)
+add_library(libgmp SHARED IMPORTED)
 
-include_directories("/usr/local/include/mongocxx/v_noabi")
-include_directories("/usr/local/include/bsoncxx/v_noabi")
+set_property(TARGET testlib PROPERTY IMPORTED_LOCATION "/usr/local/lib/libsecp256k1.so")
+set_property(TARGET testlib2 PROPERTY IMPORTED_LOCATION "/usr/local/lib/libsodium.so")
 
-target_link_libraries(cb_server mongo_db utilities zclib zmq ${CMAKE_THREAD_LIBS_INIT} ${ZeroMQ_LIBRARY} ${LIBMONGOCXX_LIBRARIES} ${JSONCPP_LIBRARIES} ${LIBBSONCXX_LIBRARIES})
+#this config is important and is not in goog shape:
+#TODO: repair the GMP configuration
+set_property(TARGET libgmp PROPERTY IMPORTED_LOCATION "/usr/lib/x86_64-linux-gnu/libgmpxx.a")
 
-target_include_directories(cb_server PUBLIC plog/include ${ZeroMQ_INCLUDE_DIR})
 
+
+add_executable(server src/cb_tests.cpp src/cb_tests.h src/serverd.cpp serialize.h uint252.h uint256.cpp uint256.h streams.h hash.h hash.cpp version.h amount.cpp amount.h random.cpp random.h
+                    tinyformat.h utilstrencodings.cpp utilstrencodings.h sync.cpp sync.h threadsafety.h utiltime.cpp utiltime.h pubkey.cpp pubkey.h
+                    util.h util.cpp key.h key.cpp keystore.cpp keystore.h arith_uint256.cpp arith_uint256.h basic-config.h main.h main.cpp)
+
+
+target_link_libraries(server utilities mongo_db cblib zmq zmqpp-static ${JSONCPP_LIBRARIES} ${Boost_LIBRARIES} ${ZeroMQ_LIBRARY} ${CMAKE_THREAD_LIBS_INIT} libzcash primitives script libcrypto testlib testlib2
+									libgmp support consensus libsnark ${Boost_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT}
+                                    secp256k1 ${OPENSSL_LIBRARIES} ${GMP_LIBRARY} ${PROCPS_LIBRARIES} ${JNI_LIBRARIES}
+                                    ${LIBMONGOCXX_LIBRARIES} ${LIBBSONCXX_LIBRARIES})
+
+## add the include directory to our compile directives
+target_include_directories(server PUBLIC
+		src/plog/include
+		src
+		${ZeroMQ_INCLUDE_DIR}
+		${Boost_INCLUDE_DIRS}
+        ${OPENSSL_INCLUDE_DIR}
+        ${DEPENDS_DIR}
+        ${DEPENDS_DIR}/snark
+        ${DEPENDS_DIR}/depends
+        ${DEPENDS_DIR}/crypto
+        ${DEPENDS_DIR}/support
+        ${DEPENDS_DIR}/consensus
+        ${DEPENDS_DIR}/primitives
+        ${DEPENDS_DIR}/script
+        ${PROCPS_INCLUDE_DIRS}
+        ${JNI_INCLUDE_DIRS})
+
+#
+#dependencies:
+#  sudo apt-get install libjsoncpp-dev (cpp JSON Parser)
+#  sudo apt-get install libzmq3-dev
+#
+#
+#
+#sudo apt-get install libsodium-dev
+#sudo apt-get install libgmp-dev
+# also needs libprocps
+#never set a duplicate name for STATIC libraries!
 
 #
 # mongoDB installation process:
@@ -84,3 +166,6 @@ target_include_directories(cb_server PUBLIC plog/include ${ZeroMQ_INCLUDE_DIR})
 #
 # Note: error while loading shared libraries: libmongocxx.so._noabi: cannot open shared object file
 #       solution: sudo /sbin/ldconfig -v
+#
+#
+# mandatory: install libzmq and in some cases czmq
